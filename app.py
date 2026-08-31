@@ -129,7 +129,6 @@ Toxo IgM,10
 tPAI-C,10
 β-MG,10"""
 
-# 读取内置 MG6200 数据
 df_mg6200_builtin = pd.read_csv(io.StringIO(MG6200_CSV))
 
 # ---- MG6200复合 数据（QC 分组） ----
@@ -151,7 +150,7 @@ qc_items = {
 }
 
 # ============================================================
-# 核心计算函数
+# 核心计算函数（修正后）
 # ============================================================
 
 def calculate_maximum(volume):
@@ -178,11 +177,11 @@ def calculate_vials_and_tests(volume, thaw_multiplier=0):
     else:
         vials = 1
 
-    if volume + 200 == 0:
-        tests = 0
+    # Test Number 直接等于瓶数（0 thaw）或 2倍瓶数（1 thaw）
+    if thaw_multiplier == 0:
+        tests = vials
     else:
-        tests_per_vial = 1000 / (volume + 200)
-        tests = int(np.floor(vials * tests_per_vial))
+        tests = 2 * vials
 
     return vials, tests
 
@@ -203,37 +202,35 @@ def display_results(total_volume, maximum, vials_0, tests_0, vials_1, tests_1):
     col1, col2, col3 = st.columns([1, 2, 2])
     with col1:
         st.metric("Total Sample Volume", f"{total_volume} µL")
-        st.metric("Maximum (Floor)", f"{maximum}")
+        st.metric("Maximum Test Number", f"{maximum}")
 
     with col2:
         st.markdown("#### 0 Thaw (Single Thaw)")
         vol_0 = total_volume + 200
-        st.metric("Total Volume", f"{vol_0} µL", delta=get_volume_range_label(vol_0))
+        st.metric("Minimum Volume/Vial", f"{vol_0} µL", delta=get_volume_range_label(vol_0))
         st.metric("Max Dispensing Vials", f"{vials_0} vials")
         st.metric("Test Number (Group)", f"{tests_0}")
 
     with col3:
         st.markdown("#### 1 Thaw (Double Thaw)")
         vol_1 = total_volume * 2 + 200
-        st.metric("Total Volume", f"{vol_1} µL", delta=get_volume_range_label(vol_1))
+        st.metric("Minimum Volume/Vial", f"{vol_1} µL", delta=get_volume_range_label(vol_1))
         st.metric("Max Dispensing Vials", f"{vials_1} vials")
         st.metric("Test Number (Group)", f"{tests_1}")
 
     with st.expander("View Calculation Details"):
         st.markdown(f"**Total Sample Volume:** {total_volume} µL")
-        st.markdown(f"**Maximum:** 800 / {total_volume} = {maximum} (floor method)")
+        st.markdown(f"**Maximum Test Number:** 800 / {total_volume} = {maximum} (floor method)")
         st.markdown("---")
         st.markdown("**0 Thaw (Single Thaw):**")
-        st.markdown(f"- Total Volume = Sample Volume + 200 = {total_volume} + 200 = {vol_0} µL")
-        st.markdown(f"- Volume Range: {get_volume_range_label(vol_0)}")
-        st.markdown(f"- Dispensing Vials = {vials_0} vials")
-        st.markdown(f"- Test Number = {vials_0} × (1000 / ({total_volume} + 200)) = {tests_0}")
+        st.markdown(f"- Minimum Volume/Vial = Sample Volume + 200 = {total_volume} + 200 = {vol_0} µL")
+        st.markdown(f"- Volume Range: {get_volume_range_label(vol_0)} → Max Dispensing Vials = {vials_0}")
+        st.markdown(f"- Test Number = Max Dispensing Vials = {tests_0}")
         st.markdown("---")
         st.markdown("**1 Thaw (Double Thaw):**")
-        st.markdown(f"- Total Volume = Sample Volume × 2 + 200 = {total_volume} × 2 + 200 = {vol_1} µL")
-        st.markdown(f"- Volume Range: {get_volume_range_label(vol_1)}")
-        st.markdown(f"- Dispensing Vials = {vials_1} vials")
-        st.markdown(f"- Test Number = {vials_1} × (1000 / ({total_volume} + 200)) = {tests_1}")
+        st.markdown(f"- Minimum Volume/Vial = Sample Volume × 2 + 200 = {total_volume} × 2 + 200 = {vol_1} µL")
+        st.markdown(f"- Volume Range: {get_volume_range_label(vol_1)} → Max Dispensing Vials = {vials_1}")
+        st.markdown(f"- Test Number = 2 × Max Dispensing Vials = {tests_1}")
 
 # ============================================================
 # UI 渲染函数
@@ -267,7 +264,6 @@ def create_multi_qc_ui(df_composite, df_mg6200):
         st.markdown(f"**{selected_qc} contains:**")
         st.write(f"Total {len(items)} items: {', '.join(items[:10])}" + ("..." if len(items) > 10 else ""))
 
-        # 获取每个项目的加样量
         item_volumes = {}
         for item in items:
             row = df_mg6200[df_mg6200['ItemName'] == item]
@@ -312,14 +308,12 @@ def main():
     st.title("🧪 QC Volume Calculator")
     st.markdown("### Quality Control Sample Volume Calculator")
 
-    # ---- 侧边栏 ----
     with st.sidebar:
         st.header("Settings")
         mode = st.radio(
             "Select QC Type:",
             ["mono QC", "multi QC"],
-            index=0,
-            help="mono QC: Uses data from MG6200 sheet; multi QC: Uses data from MG6200复合 sheet"
+            index=0
         )
         st.divider()
 
@@ -327,15 +321,14 @@ def main():
         st.info("📦 Using built-in data (embedded in the app).")
         uploaded_file = st.file_uploader(
             "Upload Excel File (optional, to override built-in data)",
-            type=["xlsx", "xls"],
-            help="Upload your own Excel file if you want to use custom data."
+            type=["xlsx", "xls"]
         )
 
         with st.expander("📋 Built-in Data Summary"):
             st.markdown(f"**MG6200:** {len(df_mg6200_builtin)} items")
             st.markdown(f"**MG6200复合:** {len(qc_items)} QC groups")
 
-    # ---- 数据加载 ----
+    # 数据加载（优先使用上传的文件）
     if uploaded_file is not None:
         try:
             xls = pd.ExcelFile(uploaded_file)
@@ -362,7 +355,6 @@ def main():
         df_mg6200 = df_mg6200_builtin
         df_mg6200_composite = qc_items
 
-    # ---- 主界面 ----
     if mode == "mono QC":
         st.subheader("🔬 Mono QC Mode")
         create_mono_qc_ui(df_mg6200)
