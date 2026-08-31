@@ -129,7 +129,7 @@ Toxo IgM,10
 tPAI-C,10
 β-MG,10"""
 
-df_mg6200_builtin = pd.read_csv(io.StringIO(MG6200_CSV))
+df_mg6200 = pd.read_csv(io.StringIO(MG6200_CSV))
 
 # ---- MG6200复合 数据（QC 分组） ----
 qc_items = {
@@ -150,7 +150,7 @@ qc_items = {
 }
 
 # ============================================================
-# 核心计算函数（修正后）
+# 核心计算函数
 # ============================================================
 
 def calculate_maximum(volume):
@@ -177,7 +177,6 @@ def calculate_vials_and_tests(volume, thaw_multiplier=0):
     else:
         vials = 1
 
-    # Test Number 直接等于瓶数（0 thaw）或 2倍瓶数（1 thaw）
     if thaw_multiplier == 0:
         tests = vials
     else:
@@ -236,12 +235,12 @@ def display_results(total_volume, maximum, vials_0, tests_0, vials_1, tests_1):
 # UI 渲染函数
 # ============================================================
 
-def create_mono_qc_ui(df):
-    items = df['ItemName'].dropna().tolist()
+def create_mono_qc_ui():
+    items = df_mg6200['ItemName'].dropna().tolist()
     selected_qc = st.selectbox("Select QC Name", items)
 
     if selected_qc:
-        row = df[df['ItemName'] == selected_qc]
+        row = df_mg6200[df_mg6200['ItemName'] == selected_qc]
         if not row.empty:
             sample_vol = row['Sample Vol (uL)'].values[0]
             st.markdown(f"**Selected Item:** {selected_qc}")
@@ -255,12 +254,12 @@ def create_mono_qc_ui(df):
         else:
             st.warning("No data found for the selected item")
 
-def create_multi_qc_ui(df_composite, df_mg6200):
-    qc_names = list(df_composite.keys())
+def create_multi_qc_ui():
+    qc_names = list(qc_items.keys())
     selected_qc = st.selectbox("Select QC Name", qc_names)
 
     if selected_qc:
-        items = df_composite[selected_qc]
+        items = qc_items[selected_qc]
         st.markdown(f"**{selected_qc} contains:**")
         st.write(f"Total {len(items)} items: {', '.join(items[:10])}" + ("..." if len(items) > 10 else ""))
 
@@ -317,50 +316,16 @@ def main():
         )
         st.divider()
 
-        st.subheader("Data Source")
-        st.info("📦 Using built-in data (embedded in the app).")
-        uploaded_file = st.file_uploader(
-            "Upload Excel File (optional, to override built-in data)",
-            type=["xlsx", "xls"]
-        )
-
         with st.expander("📋 Built-in Data Summary"):
-            st.markdown(f"**MG6200:** {len(df_mg6200_builtin)} items")
+            st.markdown(f"**MG6200:** {len(df_mg6200)} items")
             st.markdown(f"**MG6200复合:** {len(qc_items)} QC groups")
-
-    # 数据加载（优先使用上传的文件）
-    if uploaded_file is not None:
-        try:
-            xls = pd.ExcelFile(uploaded_file)
-            if "MG6200" not in xls.sheet_names or "MG6200复合" not in xls.sheet_names:
-                st.error("Uploaded file must contain both 'MG6200' and 'MG6200复合' sheets.")
-                df_mg6200 = df_mg6200_builtin
-                df_mg6200_composite = qc_items
-                st.warning("Falling back to built-in data.")
-            else:
-                df_mg6200 = pd.read_excel(uploaded_file, sheet_name="MG6200").dropna(how='all').reset_index(drop=True)
-                df_comp_raw = pd.read_excel(uploaded_file, sheet_name="MG6200复合").dropna(how='all').reset_index(drop=True)
-                qc_names_from_file = df_comp_raw.iloc[0, 1:14].dropna().tolist()
-                qc_items_from_file = {}
-                for i, qc_name in enumerate(qc_names_from_file, start=1):
-                    items = df_comp_raw.iloc[1:, i].dropna().tolist()
-                    qc_items_from_file[qc_name] = items
-                df_mg6200_composite = qc_items_from_file
-                st.success("✅ Custom file loaded successfully!")
-        except Exception as e:
-            st.error(f"Error loading file: {str(e)}. Using built-in data.")
-            df_mg6200 = df_mg6200_builtin
-            df_mg6200_composite = qc_items
-    else:
-        df_mg6200 = df_mg6200_builtin
-        df_mg6200_composite = qc_items
 
     if mode == "mono QC":
         st.subheader("🔬 Mono QC Mode")
-        create_mono_qc_ui(df_mg6200)
+        create_mono_qc_ui()
     else:
         st.subheader("📊 Multi QC Mode")
-        create_multi_qc_ui(df_mg6200_composite, df_mg6200)
+        create_multi_qc_ui()
 
 if __name__ == "__main__":
     main()
